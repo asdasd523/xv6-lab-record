@@ -82,19 +82,16 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
-
-// 由给定的va，一次走完其指向的三级页表，并返回真实的pte
-
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
   if(va >= MAXVA)
     panic("walk");
 
-  for(int level = 2; level > 0; level--) {    //注：循环两次，只查了两层页表
-    pte_t *pte = &pagetable[PX(level, va)];   //PX : 0~511,PX:根据Level+12，决定到哪一段找PTE
+  for(int level = 2; level > 0; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
-      pagetable = (pagetable_t)PTE2PA(*pte);  //第一级页表走完，pagetable就装了第二级，然后第三级
+      pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
@@ -102,7 +99,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
-  return &pagetable[PX(0, va)];               //三级页表走完，查到一级页表
+  return &pagetable[PX(0, va)];
 }
 
 // Look up a virtual address, return the physical address,
@@ -439,38 +436,4 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
-}
-
-
-void dfs(pagetable_t pagetable,int high){
-
-  if(high == 3) return;    //递归终止
-
-  char* str = 0;
-  if(high == 0) str = " ..";
-  else if(high == 1) str = " .. ..";
-  else if(high == 2) str = " .. .. ..";
-
-  for(int i = 0; i < 512; i++){
-    pte_t pte = pagetable[i];
-    if((pte & PTE_V)){
-        uint64 child = PTE2PA(pte);   //获取下一级页表
-        printf("%s%d: pte %p pa %p\n",str,i,pte,child);
-        dfs((pagetable_t)child,high+1);
-    }
-  }
-}
-
-
-int
-vmprint(pagetable_t pagetable)
-{
-  if(pagetable == 0)
-    return -1;
-
-  printf("page table %p\n",pagetable);
-
-  dfs(pagetable,0);
-
-  return 0;
 }
