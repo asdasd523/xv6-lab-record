@@ -446,20 +446,23 @@ scheduler(void)
     intr_on();
 
     for(p = proc; p < &proc[NPROC]; p++) {
+
       acquire(&p->lock);
+
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
-        swtch(&c->context, &p->context); //当前寄存器save进c,再load p的信息执行p
+        swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
       }
       release(&p->lock);
+
     }
   }
 }
@@ -487,7 +490,7 @@ sched(void)
     panic("sched interruptible");
 
   intena = mycpu()->intena;
-  swtch(&p->context, &mycpu()->context);  //当前寄存器save于old,再将new load进当前寄存器
+  swtch(&p->context, &mycpu()->context);
   mycpu()->intena = intena;
 }
 
