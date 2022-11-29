@@ -16,9 +16,11 @@
 #include "file.h"
 #include "fcntl.h"
 
+pte_t *
+walk(pagetable_t pagetable, uint64 va, int alloc);
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
-// 由该进程的fd获取其代表的struct file指针
 static int
 argfd(int n, int *pfd, struct file **pf)
 {
@@ -83,8 +85,8 @@ uint64
 sys_write(void)
 {
   struct file *f;
-  int n;      //写入字节数
-  uint64 p;   //写入的虚拟地址
+  int n;
+  uint64 p;
 
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
     return -1;
@@ -117,47 +119,41 @@ sys_fstat(void)
 }
 
 // Create the path new as a link to the same inode as old.
-
-
-//提示:new文件是没有自己的inode的
 uint64
 sys_link(void)
 {
   char name[DIRSIZ], new[MAXPATH], old[MAXPATH];
-  struct inode *dp, *ip;  //dp指向new的上一级目录名inode,ip指向当前old文件名inode
+  struct inode *dp, *ip;
 
   if(argstr(0, old, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
     return -1;
 
-  begin_op();                   //start logging
-  if((ip = namei(old)) == 0){   //取出需要link的文件的inode
+  begin_op();
+  if((ip = namei(old)) == 0){
     end_op();
     return -1;
   }
 
-  ilock(ip);                    //更新并获取ip sleep-lock
-  if(ip->type == T_DIR){        //获取到的inode必须是文件或是设备
+  ilock(ip);
+  if(ip->type == T_DIR){
     iunlockput(ip);
     end_op();
     return -1;
   }
 
-  ip->nlink++;                  //指向的该inode的文件+1
+  ip->nlink++;
   iupdate(ip);
-  iunlock(ip);                  //更新ip的nlink域
+  iunlock(ip);
 
-  if((dp = nameiparent(new, name)) == 0)  //dp指向包含需要操作文件(new)的目录的目录项的inode
+  if((dp = nameiparent(new, name)) == 0)
     goto bad;
   ilock(dp);
-
-  //在new的目录项中，加入将new文件的name保留，将其inode设置为old文件的inode
-  //再插入new目录项中,那么可以用new访问old的inode
   if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){
     iunlockput(dp);
     goto bad;
   }
   iunlockput(dp);
-  iput(ip);    //iget中+1,那么iput-1
+  iput(ip);
 
   end_op();
 
@@ -171,7 +167,6 @@ bad:
   end_op();
   return -1;
 }
-
 
 // Is the directory dp empty except for "." and ".." ?
 static int
@@ -218,22 +213,18 @@ sys_unlink(void)
 
   if(ip->nlink < 1)
     panic("unlink: nlink < 1");
-
   if(ip->type == T_DIR && !isdirempty(ip)){
     iunlockput(ip);
     goto bad;
   }
 
   memset(&de, 0, sizeof(de));
-
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
     panic("unlink: writei");
-
   if(ip->type == T_DIR){
     dp->nlink--;
     iupdate(dp);
   }
-
   iunlockput(dp);
 
   ip->nlink--;
@@ -248,11 +239,8 @@ bad:
   iunlockput(dp);
   end_op();
   return -1;
-
 }
 
-//dp是ip的上一页目录
-//create a inode pointer 
 static struct inode*
 create(char *path, short type, short major, short minor)
 {
@@ -264,10 +252,10 @@ create(char *path, short type, short major, short minor)
 
   ilock(dp);
 
-  if((ip = dirlookup(dp, name, 0)) != 0){   //检查是否存在该inode
+  if((ip = dirlookup(dp, name, 0)) != 0){
     iunlockput(dp);
     ilock(ip);
-    if((type == T_FILE) && (ip->type == T_FILE || ip->type == T_DEVICE))
+    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
       return ip;
     iunlockput(ip);
     return 0;
@@ -279,11 +267,11 @@ create(char *path, short type, short major, short minor)
   ilock(ip);
   ip->major = major;
   ip->minor = minor;
-  ip->nlink = 1;      // nlink == 1
+  ip->nlink = 1;
   iupdate(ip);
 
   if(type == T_DIR){  // Create . and .. entries.
-    dp->nlink++;      // for ".."
+    dp->nlink++;  // for ".."
     iupdate(dp);
     // No ip->nlink++ for ".": avoid cyclic ref count.
     if(dirlink(ip, ".", ip->inum) < 0 || dirlink(ip, "..", dp->inum) < 0)
@@ -312,58 +300,23 @@ sys_open(void)
 
   begin_op();
 
-  //两种情况都可以创建inode
-  if(omode & (O_CREATE)){   
-
+  if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
       end_op();
       return -1;
     }
-
   } else {
-
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
     }
-      //T_SYMLINK
-    if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
-
-      char target[MAXPATH];
-      int cycle = 0;
-
-      while(ip->type == T_SYMLINK){
-
-        if(cycle == 10){
-          end_op();
-          return -1;
-        }
-        
-        cycle++;
-
-        memset(target,0,sizeof(target));
-
-        if(readi(ip, 0, (uint64)target, 0, MAXPATH) <= 0)
-          panic("sys open read inode failed");
-
-        if((ip = namei(target)) == 0){ 
-          end_op();
-          return -1;
-        }
-
-      }
-
-    }
-
     ilock(ip);
-
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
       return -1;
     }
-
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -372,7 +325,6 @@ sys_open(void)
     return -1;
   }
 
-  //创建文件
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -388,7 +340,7 @@ sys_open(void)
     f->type = FD_INODE;
     f->off = 0;
   }
-  f->ip = ip;   // file的inode赋值，在此处链接
+  f->ip = ip;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
 
@@ -446,7 +398,6 @@ sys_chdir(void)
   struct proc *p = myproc();
   
   begin_op();
-  //根据当前path取出该path对应的inode pointer
   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
     end_op();
     return -1;
@@ -537,44 +488,174 @@ sys_pipe(void)
   return 0;
 }
 
-//Create the path new as a symlink
-
-/*
-创建软链接的步骤:
-1.创建path的inode(即path是一个不存在的文件)
-2.取链接target的name
-3.在path的inode中写入target的name
-*/
 uint64
-sys_symlink(void)
+sys_mmap(void)
 {
-  char  target[MAXPATH], path[MAXPATH];
-  struct inode *ip;
-  int ret;
+  uint64 addr;
+  int len,prot,flags,fd,off;
+  struct file* f;
+  struct proc* p = myproc();
+  struct VMA* pvma = 0;
 
+  //address always be zero, and should return the address kernel decide
+  if(argaddr(0, &addr)  < 0 ||
+     argint (1,&len)    < 0 ||
+     argint (2,&prot)   < 0 ||
+     argint (3,&flags)  < 0 ||
+     argfd  (4,&fd, &f) < 0 ||     //由fd找到struct file* f
+     argint (5,&off)    < 0 )
 
-  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+      return -1;
+
+  if(addr != 0){
+    printf("the address should always be zero \n");
     return -1;
+  }
+  
+  //找一个空的VMA
+  for(int i = 0;i < NVMA;i++){
 
-  begin_op(); 
+    if(p->vmas[i].vma_ref == 0){
+      p->vmas[i].vma_ref = 1;
+      pvma = &p->vmas[i];
+      break;
+    }
 
-  if((ip = create(path,T_SYMLINK,0,0)) == 0){       //创建软链接文件的inode
-    end_op();
+  }
+
+  if(pvma == 0){
+    printf("No more VMA \n");
     return -1;
   }
 
-  //ilock(ip);                                      //更新并获取ip sleep-lock
-  //将target的name写入path的inode
-  if((ret = writei(ip, 0, (uint64)target, 0, strlen(target))) != strlen(target))
-    panic("symlink write inode failed");
 
-  iunlockput(ip);
+  //权限约束
+  if(flags & MAP_SHARED){
+    if(((prot & PROT_READ) && !f->readable)  ||
+       ((prot & PROT_WRITE) && !f->writable) ){
+        
+        pvma->vma_ref = 0;
+        return -1;
+    }
+  }
 
-  end_op();
+  f->off = off;
+  filedup(f);
+
+  //find vma
+  pvma->vma_file  = f;
+  pvma->vma_perms = prot;
+  pvma->vma_flags = flags;
+  pvma->vma_fd    = fd;
+
+  
+  //在页表中映射文件,映射时不应该直接分配物理内存，而是仅仅在页表中划分区域
+  pvma->vma_end   = p->curmaxva;
+  p->curmaxva    -= PGROUNDUP(len);  //len是以字节为单位的
+  pvma->vma_begin = p->curmaxva;
+
+
+  return pvma->vma_begin;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 va;
+  int len;
+  struct proc* p = myproc();
+  struct VMA* pvma;
+  
+
+  if(argaddr(0,&va) < 0 ||
+     argint(1,&len) < 0)
+
+      return -1;
+
+  if((va % PGSIZE)  != 0 ||
+     (len % PGSIZE) != 0) 
+    panic("sys munmap: not aligned");
+
+
+  int i = 0;
+  for(;i < NVMA;i++){
+    pvma = &p->vmas[i];
+    if(  pvma->vma_ref == 1){
+
+        if(va >= pvma->vma_begin && (va+len) <= pvma->vma_end)
+        {
+          uint64 off = va - pvma->vma_begin;
+          int r;
+
+          //MAP_SHARED标签设定时，将共享区域的数据回写文件
+          if(pvma->vma_flags & MAP_SHARED){
+            begin_op();
+            ilock(pvma->vma_file->ip);
+            if((r = writei(pvma->vma_file->ip,1,va,off,len)) < 0){
+              iunlock(pvma->vma_file->ip);
+              printf("sys munmap write inode failed \n");
+              return -1;
+            }
+            pvma->vma_file->off += r;
+
+            iunlock(pvma->vma_file->ip);
+            end_op();
+          }
+
+          //剩余1/3无法释放的问题
+          if((va == pvma->vma_begin) && ((va+len) == pvma->vma_end)) {
+            //printf("begin:%p,end:%p,va:%p len:%d\n",pvma->vma_begin,pvma->vma_end,va,len);
+            p->curmaxva = pvma->vma_end;
+            pvma->vma_file->ref--;
+            memset(pvma,0,sizeof(struct VMA));
+          }
+          else{             //对begin和end域的收缩处理
+
+            if((va + len) < pvma->vma_end){
+              p->curmaxva = va+len;
+            }
+
+            if((p->curmaxva > pvma->vma_begin) &&
+                ((va + len) == pvma->vma_end)){
+              p->curmaxva = pvma->vma_end;
+              pvma->vma_file->ref--;
+              memset(pvma,0,sizeof(struct VMA));
+            }
+            
+          }
+          break;
+        }
+
+    }
+  }
+
+  if(i == NVMA){
+    printf("sys munmap find failed \n");
+    return -1;
+  }
+
+  //printf("begin:%p,end:%p,va:%p len:%d\n",pvma->vma_begin,pvma->vma_end,va,len / PGSIZE);
+  // uvmunmap(p->pagetable, va, len / PGSIZE, 1);
+  pte_t* pte;
+  for(uint64 a = va;a < va + len;a += PGSIZE){
+    if((pte = walk(p->pagetable, a, 0)) == 0)
+      panic("sys munmap: walk");
+
+    if((*pte & PTE_V) == 0){
+      *pte = 0;
+      continue;
+    }
+    
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("sys munmap: not a leaf");
+
+    uint64 pa = PTE2PA(*pte);
+    kfree((void*)pa);
+
+    *pte = 0;
+  }
 
   return 0;
 }
-
-
 
 

@@ -1,3 +1,5 @@
+//#include "memlayout.h"
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -82,6 +84,26 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+
+
+struct VMA{
+
+  int vma_ref;           
+  uint64 vma_begin;        //  映射区域
+  uint64 vma_end;
+
+  int vma_flags;           //  flags
+  int vma_perms;           //  permissions
+  struct file* vma_file;   //  file   指向被映射文件
+  int vma_fd;              //  文件描述符
+};
+
+#define NVMA                    16
+// #define VMASIZE  PGROUNDUP(NVMA * sizeof(struct VMA))   //页大小对齐
+// #define VMABLOCK       (TRAPFRAME - VMASIZE)
+
+
+//PGROUNDDOWN(VMABLOCK + VMASZ - 1)
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -100,9 +122,12 @@ struct proc {
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
-  struct trapframe *trapframe; // data page for trampoline.S
+  struct trapframe *trapframe; // data page for trampoline.S   physical addr
   struct context context;      // swtch() here to run process
-  struct file *ofile[NOFILE];  // Open files
+  struct file *ofile[NOFILE];  // Open files    
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  struct VMA vmas[NVMA];   
+  uint64 curmaxva;              
 };

@@ -1,14 +1,13 @@
+
+
 struct file {
   enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE } type;
-  int ref;           // reference count
+  int ref; // reference count
   char readable;
   char writable;
   struct pipe *pipe; // FD_PIPE
   struct inode *ip;  // FD_INODE and FD_DEVICE
-  //即inode偏移量，就是,根据inode pointer可以知道inumber
-  //根据inumber可以访问该inode，但是inode是固定大小
-  //可能存储了多个文件，所以通过off找到文件起始位置
-  uint off;          // FD_INODE 
+  uint off;          // FD_INODE
   short major;       // FD_DEVICE
 };
 
@@ -29,7 +28,7 @@ struct inode {
   short minor;
   short nlink;
   uint size;
-  uint addrs[NDIRECT+1+1]; //data block
+  uint addrs[NDIRECT+1];
 };
 
 // map major device number to device functions.

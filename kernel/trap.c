@@ -3,8 +3,13 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "fs.h"
+#include "file.h"
+
 
 struct spinlock tickslock;
 uint ticks;
@@ -28,6 +33,96 @@ trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
 }
+
+/*
+error:
+1.PTE:没有加PTE_U标签,导致用户空间无法使用映射的内存
+2.PTE权限问题，在MAP_SHARED下，要依据文件权限赋予映射区域的读写权限
+3.writefile的off由f->off决定，但是某些情况需要自己确定off,那么要直接调用writei
+4.代码提前退出,返回-1时，一定要清空前面进行的操作
+5.剩余1/3无法释放的问题,利用测试案例得出特殊情况
+*/
+
+inline int
+trapmmap(uint64 va)
+{
+    struct proc* p = myproc();
+    struct VMA* pvma = 0;
+    uint64 pa;
+    int perm = 0,r = 0;
+    struct inode* ip;
+    struct file* f;
+
+    //1.确认异常出现地址是mmap引起,并定位该块vma
+
+    int i = 0;
+    for(;i < NVMA;i++){
+      pvma = &p->vmas[i];
+      if(  pvma->vma_ref == 1 &&
+          (va >= pvma->vma_begin && va <= pvma->vma_end))
+          {
+            //printf("begin:%p,end:%p,va:%p \n",pvma->vma_begin,pvma->vma_end,va);
+            break;
+          }
+    }
+
+    if(i == NVMA){
+      printf("can not find the vma \n");
+      return -1;
+    }
+
+    //2.分配一块物理页,并读入4k文件到其中
+
+    if((pa = (uint64)kalloc()) == 0)
+      return -1;
+
+    memset((void*)pa,0,PGSIZE);   //初始化
+
+    f = pvma->vma_file;
+    ip = f->ip;
+
+    ilock(ip);
+
+    //????文件偏移量???
+    // if(n > (ip->size-f->off)){
+    //   n = (ip->size-f->off);
+    // }
+
+    if((r = readi(ip, 0, pa, va-pvma->vma_begin, PGSIZE)) < 0){
+      printf("read file failed \n");
+      iunlock(ip);
+      return -1;
+    }
+    iunlock(ip);
+
+    f->off += r;
+
+    //5.将读入文件的物理地址映射进入进程地址空间
+    perm |= PTE_U;
+
+    if(pvma->vma_perms & PROT_READ)
+      perm |= PTE_R;
+
+    if(pvma->vma_perms & PROT_WRITE)
+      perm |= PTE_W;
+
+    if(pvma->vma_perms & PROT_EXEC)
+      perm |= PTE_X;
+
+    
+    if(mappages(p->pagetable,va,PGSIZE,pa,perm) < 0){
+      printf("usertrap(): cannot map\n");
+      kfree((void*)pa);
+      p->killed = 1;
+      return -1;
+    }
+
+    //1.写文件如何解决
+    //2.不同的映射权限，如何保证shared情况下其他进程可以访问
+
+    return 0;
+}
+
 
 //
 // handle an interrupt, exception, or system call from user space.
@@ -67,7 +162,13 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause() == 0x0d) {   //  Load page fault
+      if(trapmmap(r_stval()) != 0) {
+        printf("usertrap mmap process failed \n");
+        p->killed = 1;
+      }
+  } 
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -90,6 +191,7 @@ void
 usertrapret(void)
 {
   struct proc *p = myproc();
+
 
   // we're about to switch the destination of traps from
   // kerneltrap() to usertrap(), so turn off interrupts until
@@ -164,7 +266,7 @@ clockintr()
 {
   acquire(&tickslock);
   ticks++;
-  wakeup(&ticks);         //完成syssleep中的sleep唤醒操作
+  wakeup(&ticks);
   release(&tickslock);
 }
 

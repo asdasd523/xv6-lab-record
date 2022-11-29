@@ -3,8 +3,11 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
+#include "fs.h"
 #include "defs.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -18,6 +21,7 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
+
 extern char trampoline[]; // trampoline.S
 
 // helps ensure that wakeups of wait()ing
@@ -25,6 +29,9 @@ extern char trampoline[]; // trampoline.S
 // memory model when using p->parent.
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
+
+pte_t *
+walk(pagetable_t pagetable, uint64 va, int alloc);
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -127,6 +134,11 @@ found:
     return 0;
   }
 
+  for(int i = 0;i < NVMA;i++)
+    p->vmas[i].vma_ref = 0;
+
+  p->curmaxva = TRAPFRAME;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -184,7 +196,7 @@ proc_pagetable(struct proc *p)
   // to/from user space, so not PTE_U.
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
-    uvmfree(pagetable, 0);
+    uvmfree  (pagetable, 0);
     return 0;
   }
 
@@ -192,7 +204,7 @@ proc_pagetable(struct proc *p)
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-    uvmfree(pagetable, 0);
+    uvmfree (pagetable, 0);
     return 0;
   }
 
@@ -204,8 +216,10 @@ proc_pagetable(struct proc *p)
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, TRAMPOLINE, 1 , 0);
+  uvmunmap(pagetable, TRAPFRAME , 1 , 0);
+  //uvmunmap(pagetable, VMABLOCK  , 1 , 0);
+
   uvmfree(pagetable, sz);
 }
 
@@ -301,6 +315,23 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+
+  for(int j = 0;j < NVMA;j++){
+    np->vmas[j].vma_ref = p->vmas[j].vma_ref;
+    np->vmas[j].vma_begin = p->vmas[j].vma_begin;
+    np->vmas[j].vma_end = p->vmas[j].vma_end;
+    np->vmas[j].vma_flags = p->vmas[j].vma_flags;
+    np->vmas[j].vma_perms = p->vmas[j].vma_perms;
+    np->vmas[j].vma_fd = p->vmas[j].vma_fd;
+    np->vmas[j].vma_file = p->vmas[j].vma_file;
+
+    if(np->vmas[j].vma_ref == 1){
+      np->vmas[j].vma_file = filedup(p->vmas[j].vma_file);
+    }
+  }
+  np->curmaxva = p->curmaxva;
+
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -340,6 +371,7 @@ void
 exit(int status)
 {
   struct proc *p = myproc();
+  struct VMA *pvma;
 
   if(p == initproc)
     panic("init exiting");
@@ -357,6 +389,52 @@ exit(int status)
   iput(p->cwd);
   end_op();
   p->cwd = 0;
+
+  //unmap the mmap
+  for(int i = 0;i < NVMA;i++){
+
+    pvma = &p->vmas[i];
+
+    if(pvma->vma_ref == 1){
+
+      uint64 len = pvma->vma_end - pvma->vma_begin;
+      if(len > 0){
+
+        if(len % PGSIZE != 0)
+          panic("exit munmap not align");
+
+        //uvmunmap(p->pagetable, pvma->vma_begin, len / PGSIZE, 1);
+        pte_t* pte;
+        for(uint64 a = pvma->vma_begin;a < pvma->vma_end;a += PGSIZE){
+
+          if((pte = walk(p->pagetable, a, 0)) == 0)
+            panic("sys munmap: walk");
+
+          if((*pte & PTE_V) == 0){
+            *pte = 0;
+            continue;
+          }
+          
+          if(PTE_FLAGS(*pte) == PTE_V)
+            panic("sys munmap: not a leaf");
+
+          uint64 pa = PTE2PA(*pte);
+          kfree((void*)pa);
+
+          *pte = 0;
+
+        }
+      }
+
+      if(pvma->vma_file->ref > 0)
+        pvma->vma_file->ref--;
+
+    }
+
+    memset(pvma,0,sizeof(struct VMA));
+  }
+  p->curmaxva = TRAPFRAME;
+
 
   acquire(&wait_lock);
 
@@ -537,14 +615,14 @@ sleep(void *chan, struct spinlock *lk)
   // (wakeup locks p->lock),
   // so it's okay to release lk.
 
-  acquire(&p->lock);   //DOC: sleeplock1
+  acquire(&p->lock);  //DOC: sleeplock1
   release(lk);
 
   // Go to sleep.
-  p->chan  = chan;     //作为wakeup是否唤醒此进行的依据
+  p->chan = chan;
   p->state = SLEEPING;
 
-  sched();             //此进程状态被注释为sleep之后，之后不会参与下一次进程调度
+  sched();
 
   // Tidy up.
   p->chan = 0;
