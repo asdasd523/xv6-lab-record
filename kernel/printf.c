@@ -132,9 +132,3 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
-
-void
-Debug(int num)
-{
-  printf("here ? %d \n",num);
-}

@@ -59,7 +59,7 @@ filedup(struct file *f)
 void
 fileclose(struct file *f)
 {
-  struct file ff;
+  struct file ff;          //copy of f
 
   acquire(&ftable.lock);
   if(f->ref < 1)
@@ -117,8 +117,10 @@ fileread(struct file *f, uint64 addr, int n)
     if(f->major < 0 || f->major >= NDEV || !devsw[f->major].read)
       return -1;
     r = devsw[f->major].read(1, addr, n);
+
   } else if(f->type == FD_INODE){
     ilock(f->ip);
+
     if((r = readi(f->ip, 1, addr, f->off, n)) > 0)
       f->off += r;
     iunlock(f->ip);
@@ -161,7 +163,7 @@ filewrite(struct file *f, uint64 addr, int n)
 
       begin_op();
       ilock(f->ip);
-      if ((r = writei(f->ip, 1, addr + i, f->off, n1)) > 0)
+      if ((r = writei(f->ip, 1, addr + i, f->off, n1)) > 0)  //off inode偏移量?
         f->off += r;
       iunlock(f->ip);
       end_op();

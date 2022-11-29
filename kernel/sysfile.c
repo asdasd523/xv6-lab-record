@@ -18,6 +18,7 @@
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
+// 由该进程的fd获取其代表的struct file指针
 static int
 argfd(int n, int *pfd, struct file **pf)
 {
@@ -82,8 +83,8 @@ uint64
 sys_write(void)
 {
   struct file *f;
-  int n;
-  uint64 p;
+  int n;      //写入字节数
+  uint64 p;   //写入的虚拟地址
 
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
     return -1;
@@ -116,41 +117,47 @@ sys_fstat(void)
 }
 
 // Create the path new as a link to the same inode as old.
+
+
+//提示:new文件是没有自己的inode的
 uint64
 sys_link(void)
 {
   char name[DIRSIZ], new[MAXPATH], old[MAXPATH];
-  struct inode *dp, *ip;
+  struct inode *dp, *ip;  //dp指向new的上一级目录名inode,ip指向当前old文件名inode
 
   if(argstr(0, old, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
     return -1;
 
-  begin_op();
-  if((ip = namei(old)) == 0){
+  begin_op();                   //start logging
+  if((ip = namei(old)) == 0){   //取出需要link的文件的inode
     end_op();
     return -1;
   }
 
-  ilock(ip);
-  if(ip->type == T_DIR){
+  ilock(ip);                    //更新并获取ip sleep-lock
+  if(ip->type == T_DIR){        //获取到的inode必须是文件或是设备
     iunlockput(ip);
     end_op();
     return -1;
   }
 
-  ip->nlink++;
+  ip->nlink++;                  //指向的该inode的文件+1
   iupdate(ip);
-  iunlock(ip);
+  iunlock(ip);                  //更新ip的nlink域
 
-  if((dp = nameiparent(new, name)) == 0)
+  if((dp = nameiparent(new, name)) == 0)  //dp指向包含需要操作文件(new)的目录的目录项的inode
     goto bad;
   ilock(dp);
+
+  //在new的目录项中，加入将new文件的name保留，将其inode设置为old文件的inode
+  //再插入new目录项中,那么可以用new访问old的inode
   if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){
     iunlockput(dp);
     goto bad;
   }
   iunlockput(dp);
-  iput(ip);
+  iput(ip);    //iget中+1,那么iput-1
 
   end_op();
 
@@ -164,6 +171,7 @@ bad:
   end_op();
   return -1;
 }
+
 
 // Is the directory dp empty except for "." and ".." ?
 static int
@@ -210,18 +218,22 @@ sys_unlink(void)
 
   if(ip->nlink < 1)
     panic("unlink: nlink < 1");
+
   if(ip->type == T_DIR && !isdirempty(ip)){
     iunlockput(ip);
     goto bad;
   }
 
   memset(&de, 0, sizeof(de));
+
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
     panic("unlink: writei");
+
   if(ip->type == T_DIR){
     dp->nlink--;
     iupdate(dp);
   }
+
   iunlockput(dp);
 
   ip->nlink--;
@@ -236,8 +248,11 @@ bad:
   iunlockput(dp);
   end_op();
   return -1;
+
 }
 
+//dp是ip的上一页目录
+//create a inode pointer 
 static struct inode*
 create(char *path, short type, short major, short minor)
 {
@@ -249,10 +264,10 @@ create(char *path, short type, short major, short minor)
 
   ilock(dp);
 
-  if((ip = dirlookup(dp, name, 0)) != 0){
+  if((ip = dirlookup(dp, name, 0)) != 0){   //检查是否存在该inode
     iunlockput(dp);
     ilock(ip);
-    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
+    if((type == T_FILE) && (ip->type == T_FILE || ip->type == T_DEVICE))
       return ip;
     iunlockput(ip);
     return 0;
@@ -264,11 +279,11 @@ create(char *path, short type, short major, short minor)
   ilock(ip);
   ip->major = major;
   ip->minor = minor;
-  ip->nlink = 1;
+  ip->nlink = 1;      // nlink == 1
   iupdate(ip);
 
   if(type == T_DIR){  // Create . and .. entries.
-    dp->nlink++;  // for ".."
+    dp->nlink++;      // for ".."
     iupdate(dp);
     // No ip->nlink++ for ".": avoid cyclic ref count.
     if(dirlink(ip, ".", ip->inum) < 0 || dirlink(ip, "..", dp->inum) < 0)
@@ -297,23 +312,58 @@ sys_open(void)
 
   begin_op();
 
-  if(omode & O_CREATE){
+  //两种情况都可以创建inode
+  if(omode & (O_CREATE)){   
+
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
       end_op();
       return -1;
     }
+
   } else {
+
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
     }
+      //T_SYMLINK
+    if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+
+      char target[MAXPATH];
+      int cycle = 0;
+
+      while(ip->type == T_SYMLINK){
+
+        if(cycle == 10){
+          end_op();
+          return -1;
+        }
+        
+        cycle++;
+
+        memset(target,0,sizeof(target));
+
+        if(readi(ip, 0, (uint64)target, 0, MAXPATH) <= 0)
+          panic("sys open read inode failed");
+
+        if((ip = namei(target)) == 0){ 
+          end_op();
+          return -1;
+        }
+
+      }
+
+    }
+
     ilock(ip);
+
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
       return -1;
     }
+
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -322,6 +372,7 @@ sys_open(void)
     return -1;
   }
 
+  //创建文件
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -337,7 +388,7 @@ sys_open(void)
     f->type = FD_INODE;
     f->off = 0;
   }
-  f->ip = ip;
+  f->ip = ip;   // file的inode赋值，在此处链接
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
 
@@ -395,6 +446,7 @@ sys_chdir(void)
   struct proc *p = myproc();
   
   begin_op();
+  //根据当前path取出该path对应的inode pointer
   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
     end_op();
     return -1;
@@ -484,3 +536,45 @@ sys_pipe(void)
   }
   return 0;
 }
+
+//Create the path new as a symlink
+
+/*
+创建软链接的步骤:
+1.创建path的inode(即path是一个不存在的文件)
+2.取链接target的name
+3.在path的inode中写入target的name
+*/
+uint64
+sys_symlink(void)
+{
+  char  target[MAXPATH], path[MAXPATH];
+  struct inode *ip;
+  int ret;
+
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op(); 
+
+  if((ip = create(path,T_SYMLINK,0,0)) == 0){       //创建软链接文件的inode
+    end_op();
+    return -1;
+  }
+
+  //ilock(ip);                                      //更新并获取ip sleep-lock
+  //将target的name写入path的inode
+  if((ret = writei(ip, 0, (uint64)target, 0, strlen(target))) != strlen(target))
+    panic("symlink write inode failed");
+
+  iunlockput(ip);
+
+  end_op();
+
+  return 0;
+}
+
+
+
+

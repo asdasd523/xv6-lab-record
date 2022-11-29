@@ -68,20 +68,25 @@ balloc(uint dev)
   struct buf *bp;
 
   bp = 0;
-  for(b = 0; b < sb.size; b += BPB){
+  //sb.size代表的是该disk拥有多少个blocks
+  
+  for(b = 0; b < sb.size; b += BPB){                   //b = 0 ~ size-1  BPB
+
     bp = bread(dev, BBLOCK(b, sb));
-    for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
+    for(bi = 0; bi < BPB && b + bi < sb.size; bi++){   //bi = 0 ~ 8*1024-1
       m = 1 << (bi % 8);
-      if((bp->data[bi/8] & m) == 0){  // Is block free?
-        bp->data[bi/8] |= m;  // Mark block in use.
+      if((bp->data[bi/8] & m) == 0){                   //Is block free?
+        bp->data[bi/8] |= m;                           //Mark block in use.
         log_write(bp);
         brelse(bp);
         bzero(dev, b + bi);
         return b + bi;
       }
     }
+
     brelse(bp);
   }
+
   panic("balloc: out of blocks");
 }
 
@@ -97,7 +102,7 @@ bfree(int dev, uint b)
   m = 1 << (bi % 8);
   if((bp->data[bi/8] & m) == 0)
     panic("freeing free block");
-  bp->data[bi/8] &= ~m;
+  bp->data[bi/8] &= ~m;       //清除bitmap中b相应的位，即置为0
   log_write(bp);
   brelse(bp);
 }
@@ -171,11 +176,13 @@ bfree(int dev, uint b)
 // dev, and inum.  One must hold ip->lock in order to
 // read or write that inode's ip->valid, ip->size, ip->type, &c.
 
+//inode 在内存中的缓存块
 struct {
   struct spinlock lock;
   struct inode inode[NINODE];
 } itable;
 
+//初始化inode 缓存块
 void
 iinit()
 {
@@ -190,7 +197,7 @@ iinit()
 static struct inode* iget(uint dev, uint inum);
 
 // Allocate an inode on device dev.
-// Mark it as allocated by  giving it type type.
+// Mark it as allocated by giving it type type.
 // Returns an unlocked but allocated and referenced inode.
 struct inode*
 ialloc(uint dev, short type)
@@ -200,12 +207,12 @@ ialloc(uint dev, short type)
   struct dinode *dip;
 
   for(inum = 1; inum < sb.ninodes; inum++){
-    bp = bread(dev, IBLOCK(inum, sb));
-    dip = (struct dinode*)bp->data + inum%IPB;
-    if(dip->type == 0){  // a free inode
+    bp = bread(dev, IBLOCK(inum, sb));            //读取包含该inode的block
+    dip = (struct dinode*)bp->data + inum % IPB;  //在该block中找到inode块
+    if(dip->type == 0){                           // a free inode
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
-      log_write(bp);   // mark it allocated on the disk
+      log_write(bp);                              // mark it allocated on the disk
       brelse(bp);
       return iget(dev, inum);
     }
@@ -226,11 +233,13 @@ iupdate(struct inode *ip)
 
   bp = bread(ip->dev, IBLOCK(ip->inum, sb));
   dip = (struct dinode*)bp->data + ip->inum%IPB;
+
   dip->type = ip->type;
   dip->major = ip->major;
   dip->minor = ip->minor;
   dip->nlink = ip->nlink;
   dip->size = ip->size;
+  
   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
   log_write(bp);
   brelse(bp);
@@ -248,7 +257,7 @@ iget(uint dev, uint inum)
 
   // Is the inode already in the table?
   empty = 0;
-  for(ip = &itable.inode[0]; ip < &itable.inode[NINODE]; ip++){
+  for(ip = &itable.inode[0]; ip < &itable.inode[NINODE]; ip++) {
     if(ip->ref > 0 && ip->dev == dev && ip->inum == inum){
       ip->ref++;
       release(&itable.lock);
@@ -297,6 +306,7 @@ ilock(struct inode *ip)
   acquiresleep(&ip->lock);
 
   if(ip->valid == 0){
+
     bp = bread(ip->dev, IBLOCK(ip->inum, sb));
     dip = (struct dinode*)bp->data + ip->inum%IPB;
     ip->type = dip->type;
@@ -309,6 +319,7 @@ ilock(struct inode *ip)
     ip->valid = 1;
     if(ip->type == 0)
       panic("ilock: no type");
+
   }
 }
 
@@ -334,18 +345,20 @@ iput(struct inode *ip)
 {
   acquire(&itable.lock);
 
+  //do recycled
   if(ip->ref == 1 && ip->valid && ip->nlink == 0){
     // inode has no links and no other references: truncate and free.
 
     // ip->ref == 1 means no other process can have ip locked,
     // so this acquiresleep() won't block (or deadlock).
+
     acquiresleep(&ip->lock);
 
     release(&itable.lock);
 
     itrunc(ip);
     ip->type = 0;
-    iupdate(ip);
+    iupdate(ip);    //update in-memory inode data to disk
     ip->valid = 0;
 
     releasesleep(&ip->lock);
@@ -378,19 +391,23 @@ static uint
 bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
+  uint *aa;
   struct buf *bp;
 
+  //11
   if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
+    if((addr = ip->addrs[bn]) == 0){
       ip->addrs[bn] = addr = balloc(ip->dev);
+    }
     return addr;
   }
   bn -= NDIRECT;
 
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+    if((addr = ip->addrs[NDIRECT]) == 0){
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+    }
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
@@ -398,6 +415,43 @@ bmap(struct inode *ip, uint bn)
       log_write(bp);
     }
     brelse(bp);
+    return addr;
+  }
+
+  bn -= NINDIRECT;
+
+  if(bn < DBLNINDIRECT){
+
+    //第一层
+    if((addr = ip->addrs[NDIRECT+1]) == 0)           //第一层
+      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
+    
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;                             //取第二层的block
+
+    //第二层
+    uint i  = bn / NINDIRECT;
+    bn = bn % NINDIRECT;
+
+    //如果第二层blockno为0
+    if((addr = a[i]) == 0) {                         
+      a[i] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+
+    brelse(bp);
+
+    //第三层
+    bp = bread(ip->dev, addr);
+    aa = (uint*)bp->data;
+
+    if((addr = aa[bn]) == 0){
+      aa[bn] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+
+    brelse(bp);
+
     return addr;
   }
 
@@ -410,26 +464,58 @@ void
 itrunc(struct inode *ip)
 {
   int i, j;
-  struct buf *bp;
-  uint *a;
+  struct buf *bp,*bpp;
+  uint *a,*aa;
 
+  //1.free direct blocks
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
       bfree(ip->dev, ip->addrs[i]);
       ip->addrs[i] = 0;
     }
   }
-
+  
   if(ip->addrs[NDIRECT]){
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
+
+    //2.free ones listed in the indirect blocks
     for(j = 0; j < NINDIRECT; j++){
       if(a[j])
         bfree(ip->dev, a[j]);
     }
     brelse(bp);
+
+    //3.free indirect block itself
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // DBLNINDIRECT
+  if(ip->addrs[NDIRECT+1]){
+    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+    a = (uint*)bp->data;
+
+    //2.free ones listed in the indirect blocks
+    for(j = 0; j < NINDIRECT; j++){
+      if(a[j] == 0) continue;
+
+      bpp = bread(ip->dev,a[j]);
+      aa = (uint*)bpp->data;
+
+      for(int m = 0;m < NINDIRECT;m++) {  //third level
+        if(aa[m] != 0)
+          bfree(ip->dev,aa[m]); 
+      }
+
+      brelse(bpp);
+      bfree(ip->dev, a[j]);  
+    }
+    brelse(bp);
+
+    //3.free indirect block itself
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
@@ -464,13 +550,16 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
     n = ip->size - off;
 
   for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
+
     bp = bread(ip->dev, bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
+    m = min(n - tot, BSIZE - off % BSIZE);
+
     if(either_copyout(user_dst, dst, bp->data + (off % BSIZE), m) == -1) {
       brelse(bp);
       tot = -1;
       break;
     }
+
     brelse(bp);
   }
   return tot;
@@ -494,7 +583,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
   if(off + n > MAXFILE*BSIZE)
     return -1;
 
-  for(tot=0; tot<n; tot+=m, off+=m, src+=m){
+  for(tot=0; tot<n; tot+=m, off+=m, src+=m) {
     bp = bread(ip->dev, bmap(ip, off/BSIZE));
     m = min(n - tot, BSIZE - off%BSIZE);
     if(either_copyin(bp->data + (off % BSIZE), user_src, src, m) == -1) {
@@ -536,16 +625,18 @@ dirlookup(struct inode *dp, char *name, uint *poff)
     panic("dirlookup not DIR");
 
   for(off = 0; off < dp->size; off += sizeof(de)){
+    //将dp中的偏移off的data读到de中去
     if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
       panic("dirlookup read");
+    //inum等于0代表该de已被释放
     if(de.inum == 0)
       continue;
-    if(namecmp(name, de.name) == 0){
+    if(namecmp(name, de.name) == 0){   //相同,finded
       // entry matches path element
       if(poff)
-        *poff = off;
-      inum = de.inum;
-      return iget(dp->dev, inum);
+        *poff = off;                   //当前inode的偏移量给poff
+      inum = de.inum;                   
+      return iget(dp->dev, inum);      
     }
   }
 
@@ -561,12 +652,14 @@ dirlink(struct inode *dp, char *name, uint inum)
   struct inode *ip;
 
   // Check that name is not present.
+  // 确定需要加入的de是否已经存在
   if((ip = dirlookup(dp, name, 0)) != 0){
     iput(ip);
     return -1;
   }
 
   // Look for an empty dirent.
+  // 在该inode中寻找一个empty entry,写入de中
   for(off = 0; off < dp->size; off += sizeof(de)){
     if(readi(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
       panic("dirlink read");
@@ -574,8 +667,10 @@ dirlink(struct inode *dp, char *name, uint inum)
       break;
   }
 
+  //初始化该de entry
   strncpy(de.name, name, DIRSIZ);
   de.inum = inum;
+  //将初始化的de entry写入dp中去
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
     panic("dirlink");
 
@@ -596,17 +691,23 @@ dirlink(struct inode *dp, char *name, uint inum)
 //   skipelem("a", name) = "", setting name = "a"
 //   skipelem("", name) = skipelem("////", name) = 0
 //
+// 跳过第一个路径元素，并将该名称放入name数组中
+
+//返回0的情况:传入的path除'/'已经没有其他字符
 static char*
 skipelem(char *path, char *name)
 {
   char *s;
   int len;
 
-  while(*path == '/')
+  //跳过左边的'/'
+  while(*path == '/')  
     path++;
   if(*path == 0)
     return 0;
   s = path;
+
+  //解析出'/'***'/'之间的字符串，并赋值给name
   while(*path != '/' && *path != 0)
     path++;
   len = path - s;
@@ -616,8 +717,11 @@ skipelem(char *path, char *name)
     memmove(name, s, len);
     name[len] = 0;
   }
+
+  //跳过右边'/'
   while(*path == '/')
     path++;
+
   return path;
 }
 
@@ -631,17 +735,26 @@ namex(char *path, int nameiparent, char *name)
   struct inode *ip, *next;
 
   if(*path == '/')
-    ip = iget(ROOTDEV, ROOTINO);
+    ip = iget(ROOTDEV, ROOTINO);  //start at root
   else
-    ip = idup(myproc()->cwd);
+    ip = idup(myproc()->cwd);     //start at pwd
 
-  while((path = skipelem(path, name)) != 0){
+
+  //逐个解析每一个目录名,path是解析完后，name存放解析出的每一个目录名
+
+  //过程:例如第一次进入，ip指向'/'的目录项,name中储存'/'下的目录项名
+  //那么本次循环，就是在'/'的data block中寻找name代表的目录项，并获取其ip
+
+  while((path = skipelem(path, name)) != 0) {   //consider each element in turn
     ilock(ip);
+
+    //所以,当name中储存的字符串代表文件名时,ip指向的依然是一个目录项
+    //只不过，当name是文件，那么这也是最后一次循环
     if(ip->type != T_DIR){
       iunlockput(ip);
       return 0;
     }
-    if(nameiparent && *path == '\0'){
+    if(nameiparent && *path == '\0'){  //一般是为了取出..的inode
       // Stop one level early.
       iunlock(ip);
       return ip;
@@ -653,6 +766,8 @@ namex(char *path, int nameiparent, char *name)
     iunlockput(ip);
     ip = next;
   }
+
+
   if(nameiparent){
     iput(ip);
     return 0;
@@ -664,11 +779,13 @@ struct inode*
 namei(char *path)
 {
   char name[DIRSIZ];
-  return namex(path, 0, name);
+  return namex(path, 0, name);  //name中存放路径的最后一个目录或文件名
 }
 
+//取path对应目录的上一个目录(..)
+//name中储存着最低级目录项或者文件名
 struct inode*
 nameiparent(char *path, char *name)
 {
-  return namex(path, 1, name);
+  return namex(path, 1, name);  
 }

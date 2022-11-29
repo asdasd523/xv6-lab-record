@@ -228,7 +228,7 @@ virtio_disk_rw(struct buf *b, int write)
   if(write)
     buf0->type = VIRTIO_BLK_T_OUT; // write the disk
   else
-    buf0->type = VIRTIO_BLK_T_IN;  // read the disk
+    buf0->type = VIRTIO_BLK_T_IN; // read the disk
   buf0->reserved = 0;
   buf0->sector = sector;
 

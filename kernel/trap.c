@@ -164,7 +164,7 @@ clockintr()
 {
   acquire(&tickslock);
   ticks++;
-  wakeup(&ticks);
+  wakeup(&ticks);         //完成syssleep中的sleep唤醒操作
   release(&tickslock);
 }
 

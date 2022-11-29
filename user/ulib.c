@@ -3,7 +3,6 @@
 #include "kernel/fcntl.h"
 #include "user/user.h"
 
-
 char*
 strcpy(char *s, const char *t)
 {
@@ -135,4 +134,3 @@ memcpy(void *dst, const void *src, uint n)
 {
   return memmove(dst, src, n);
 }
-

@@ -1,18 +1,14 @@
 struct file {
-#ifdef LAB_NET
-  enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE, FD_SOCK } type;
-#else
   enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE } type;
-#endif
-  int ref; // reference count
+  int ref;           // reference count
   char readable;
   char writable;
   struct pipe *pipe; // FD_PIPE
   struct inode *ip;  // FD_INODE and FD_DEVICE
-#ifdef LAB_NET
-  struct sock *sock; // FD_SOCK
-#endif
-  uint off;          // FD_INODE
+  //即inode偏移量，就是,根据inode pointer可以知道inumber
+  //根据inumber可以访问该inode，但是inode是固定大小
+  //可能存储了多个文件，所以通过off找到文件起始位置
+  uint off;          // FD_INODE 
   short major;       // FD_DEVICE
 };
 
@@ -33,7 +29,7 @@ struct inode {
   short minor;
   short nlink;
   uint size;
-  uint addrs[NDIRECT+1];
+  uint addrs[NDIRECT+1+1]; //data block
 };
 
 // map major device number to device functions.
@@ -45,4 +41,3 @@ struct devsw {
 extern struct devsw devsw[];
 
 #define CONSOLE 1
-#define STATS   2

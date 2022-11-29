@@ -86,7 +86,6 @@ LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
-
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb
 
 ifdef LAB
@@ -239,13 +238,14 @@ endif
 
 ifeq ($(LAB),lock)
 UPROGS += \
-	$U/_kalloctest \
+	$U/_kalloctest\
 	$U/_bcachetest
 endif
 
 ifeq ($(LAB),fs)
 UPROGS += \
-	$U/_bigfile
+	$U/_bigfile\
+	$U/_symlinktest
 endif
 
 

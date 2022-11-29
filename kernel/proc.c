@@ -446,9 +446,7 @@ scheduler(void)
     intr_on();
 
     for(p = proc; p < &proc[NPROC]; p++) {
-
       acquire(&p->lock);
-
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
@@ -462,7 +460,6 @@ scheduler(void)
         c->proc = 0;
       }
       release(&p->lock);
-
     }
   }
 }
@@ -540,14 +537,14 @@ sleep(void *chan, struct spinlock *lk)
   // (wakeup locks p->lock),
   // so it's okay to release lk.
 
-  acquire(&p->lock);  //DOC: sleeplock1
+  acquire(&p->lock);   //DOC: sleeplock1
   release(lk);
 
   // Go to sleep.
-  p->chan = chan;
+  p->chan  = chan;     //作为wakeup是否唤醒此进行的依据
   p->state = SLEEPING;
 
-  sched();
+  sched();             //此进程状态被注释为sleep之后，之后不会参与下一次进程调度
 
   // Tidy up.
   p->chan = 0;
