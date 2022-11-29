@@ -82,7 +82,6 @@ fileclose(struct file *f)
   }
 }
 
-//SYS_fstat原型函数
 // Get metadata about file f.
 // addr is a user virtual address, pointing to a struct stat.
 int

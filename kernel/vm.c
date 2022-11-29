@@ -354,8 +354,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   uint64 n, va0, pa0;
 
   while(len > 0){
-    va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    va0 = PGROUNDDOWN(dstva);        //虚拟地址起始
+    pa0 = walkaddr(pagetable, va0);  //物理地址起始
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);

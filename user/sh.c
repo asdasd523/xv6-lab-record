@@ -100,21 +100,21 @@ runcmd(struct cmd *cmd)
 
   case PIPE:
     pcmd = (struct pipecmd*)cmd;
-    if(pipe(p) < 0)         //初始化一个管道
+    if(pipe(p) < 0)
       panic("pipe");
     if(fork1() == 0){
-      close(1);             
+      close(1);
       dup(p[1]);
       close(p[0]);
-      close(p[1]);          //左命令所在子进程向管道写入
-      runcmd(pcmd->left);   //递归执行左命令
+      close(p[1]);
+      runcmd(pcmd->left);
     }
     if(fork1() == 0){
       close(0);
       dup(p[0]);
       close(p[0]);
-      close(p[1]);          //右命令所在子进程向管道读出
-      runcmd(pcmd->right);  //递归执行右命令
+      close(p[1]);
+      runcmd(pcmd->right);
     }
     close(p[0]);
     close(p[1]);
@@ -148,7 +148,7 @@ main(void)
   static char buf[100];
   int fd;
 
-  // Ensure that three file descriptors are open.控制台是作为xv6中唯一一个设备文件
+  // Ensure that three file descriptors are open.
   while((fd = open("console", O_RDWR)) >= 0){
     if(fd >= 3){
       close(fd);

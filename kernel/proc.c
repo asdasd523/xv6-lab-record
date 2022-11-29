@@ -296,6 +296,9 @@ fork(void)
   }
   np->sz = p->sz;
 
+  //copy mask to son
+  np->mask = p->mask;    
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -325,7 +328,7 @@ fork(void)
   return pid;
 }
 
-// Pass p's abandoned children to init.
+// Pass p's abandoned children to init.  孤儿回收
 // Caller must hold wait_lock.
 void
 reparent(struct proc *p)
@@ -680,4 +683,17 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+//获取进程表中状态不为未使用的进程个数
+uint64
+get_procnum()
+{
+  struct proc* p;
+  int res = 0;
+  for(p = proc;p < &proc[NPROC];p++){
+    if(p->state != UNUSED)
+      res++;
+  }
+  return res;
 }

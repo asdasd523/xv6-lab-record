@@ -34,7 +34,7 @@ void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
+  p = (char*)PGROUNDUP((uint64)pa_start);   //以地址的所在位置的数代表分配内存的大小？？？ ensure that it frees only aligned physical addresses.
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
 }
@@ -79,4 +79,19 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+//user: 获取剩余未分配的物理内存
+uint64
+getfreemem(void)
+{
+  uint64 n = 0;
+  struct run *r,*start = kmem.freelist;
+  while(kmem.freelist != 0){
+    r = kmem.freelist;
+    kmem.freelist = r->next;
+    n += PGSIZE;
+  }
+  kmem.freelist = start;   //计算完之后复原空内存链表
+  return n;
 }
