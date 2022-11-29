@@ -4,7 +4,8 @@
 # 
 # Save current registers in old. Load from new.	
 
-
+# a0存放要放弃本轮分配的进程上文,a1存放要切换的进程下文
+# sd 写入  ld 读入
 .globl swtch
 swtch:
         sd ra, 0(a0)
@@ -37,6 +38,6 @@ swtch:
         ld s10, 96(a1)
         ld s11, 104(a1)
         
-        ret
+        ret              //回到ra地址位置
 
 	

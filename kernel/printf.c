@@ -109,7 +109,6 @@ printf(char *fmt, ...)
       break;
     }
   }
-  va_end(ap);
 
   if(locking)
     release(&pr.lock);
@@ -118,9 +117,6 @@ printf(char *fmt, ...)
 void
 panic(char *s)
 {
-
-  //backtrace();
-
   pr.locking = 0;
   printf("panic: ");
   printf(s);
@@ -135,25 +131,4 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
-}
-
-void
-backtrace()
-{
-  // 获取栈帧的栈底地址
-  uint64 fpaddr = r_fp();
-
-  // 获取当前进程在kernel中stack的最大地址
-  uint64 max = PGROUNDUP(fpaddr);   //kernel stack consists of a single page
-
-  // 栈的生长方向是由高到低
-  // 现在在此函数往main方向backtrace，所以fpaddr是在升高的
-  // 于是，判断条件设置为小于最大地址
-  while(fpaddr < max) {
-    // return address
-    printf("%p\n",*((uint64*)(fpaddr-8)));  //取该栈的地址存放的地址
-
-    // 调用该函数的栈帧首地址是fp-16
-    fpaddr = *((uint64*)(fpaddr-16));
-  }
 }
