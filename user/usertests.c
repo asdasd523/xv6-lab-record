@@ -2417,8 +2417,9 @@ stacktest(char *s)
   wait(&xstatus);
   if(xstatus == -1)  // kernel killed child?
     exit(0);
-  else
+  else{
     exit(xstatus);
+  }
 }
 
 // check that writes to text segment fault
@@ -2440,8 +2441,9 @@ textwrite(char *s)
   wait(&xstatus);
   if(xstatus == -1)  // kernel killed child?
     exit(0);
-  else
+  else{
     exit(xstatus);
+  }
 }
 
 // regression test. copyin(), copyout(), and copyinstr() used to cast

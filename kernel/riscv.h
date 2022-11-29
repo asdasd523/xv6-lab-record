@@ -269,7 +269,7 @@ r_time()
 static inline void
 intr_on()
 {
-  w_sstatus(r_sstatus() | SSTATUS_SIE);
+  w_sstatus(r_sstatus() | SSTATUS_SIE);  //superivor status 最低位置高
 }
 
 // disable device interrupts
@@ -327,6 +327,15 @@ sfence_vma()
   asm volatile("sfence.vma zero, zero");
 }
 
+// fp 获取栈顶指针
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0": "=r"(x) );
+  return x;
+}
+
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
 
@@ -335,21 +344,26 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
 
-#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
-#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
+//sz放于高13位起，低12位全部清0
+//保证4k对齐，即必须是4096的倍数(每一页的起始地址都是4k的倍数),如果不是，那么用下一页的起始地址
+#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1)) 
+//同理，这种是如果不是，那么返回此页的起始地址
+#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))  //所有低12位清0
 
 #define PTE_V (1L << 0) // valid
 #define PTE_R (1L << 1)
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+#define PTE_C (1L << 8) // copy pte
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
 
+// 仅仅是计算PTE对应物理页的首地址，不包含偏移量
 #define PTE2PA(pte) (((pte) >> 10) << 12)
 
-#define PTE_FLAGS(pte) ((pte) & 0x3FF)
+#define PTE_FLAGS(pte) ((pte) & 0x3FF) //保留低10位,即PTE中的10个标志位
 
 // extract the three 9-bit page table indices from a virtual address.
 #define PXMASK          0x1FF // 9 bits

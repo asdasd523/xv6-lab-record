@@ -62,6 +62,7 @@ exec(char *path, char **argv)
     if(ph.vaddr % PGSIZE != 0)
       goto bad;
     uint64 sz1;
+    //为需要的代码分配虚拟内存以及对应的物理内存,并载入地址空间
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
       goto bad;
     sz = sz1;
@@ -78,6 +79,7 @@ exec(char *path, char **argv)
   // Allocate two pages at the next page boundary.
   // Make the first inaccessible as a stack guard.
   // Use the second as the user stack.
+  
   sz = PGROUNDUP(sz);
   uint64 sz1;
   if((sz1 = uvmalloc(pagetable, sz, sz + 2*PGSIZE, PTE_W)) == 0)

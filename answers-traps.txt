@@ -1,0 +1,6 @@
+1.a0~a7 registers contain arguments to fuctions;a2 register.
+2.they are optimized by inline.
+3.0x64A
+4.0x38,ra save the address where function return
+5.He110 World
+6.The output is 0,because it stores the value of a2 register.

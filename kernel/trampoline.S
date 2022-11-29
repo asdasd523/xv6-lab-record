@@ -36,7 +36,7 @@ uservec:
         li a0, TRAPFRAME
         
         # save the user registers in TRAPFRAME
-        sd ra, 40(a0)
+        sd ra, 40(a0)   # write ra to memory address a0+40
         sd sp, 48(a0)
         sd gp, 56(a0)
         sd tp, 64(a0)

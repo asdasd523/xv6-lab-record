@@ -132,6 +132,19 @@ found:
     return 0;
   }
 
+  //user add++++++++++++++++++++++++++++++
+  //必须要以一页大小分配，所以不存在给自定义结构体分配空间
+  if((p->timerIt.alarmframe =  (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  p->timerIt.pFunc = 0;
+  p->timerIt.ticks = 0;
+  p->timerIt.timepass = 0;
+  p->timerIt.accessable = 1;
+  //user add++++++++++++++++++++++++++++++
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -158,6 +171,13 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  //user++++++++++++++++
+  if(p->timerIt.alarmframe)
+    kfree(p->timerIt.alarmframe);
+  p->timerIt.alarmframe=0;
+  //user++++++++++++++++
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;

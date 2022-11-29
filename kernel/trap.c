@@ -43,14 +43,14 @@ usertrap(void)
 
   // send interrupts and exceptions to kerneltrap(),
   // since we're now in the kernel.
-  w_stvec((uint64)kernelvec);
+  w_stvec((uint64)kernelvec);  //调用trap处理函数换到kernelvec
 
   struct proc *p = myproc();
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if(r_scause() == 8){   //syscall
     // system call
 
     if(killed(p))
@@ -58,6 +58,7 @@ usertrap(void)
 
     // sepc points to the ecall instruction,
     // but we want to return to the next instruction.
+    //让pc从内核返回后直接指向下一条指令
     p->trapframe->epc += 4;
 
     // an interrupt will change sepc, scause, and sstatus,
@@ -65,20 +66,47 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  }else if(r_scause() == 15) { // 缺页错误
+    if(uncopied_cow(p->pagetable,r_stval()) > 0){
+      if(r_stval() < PGSIZE)
+        p->killed = 1;
+      if(cowalloc(p->pagetable,r_stval()) < 0)
+        p->killed = 1;
+    }
+    else if(uncopied_cow(p->pagetable,r_stval()) < 0){
+       p->killed = 1;
+    }
+
+  }
+  else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } 
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    setkilled(p);
+    p->killed = 1;
   }
 
-  if(killed(p))
+  if(p->killed)
     exit(-1);
 
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  // give up the CPU if this is a timer interrupt
+  if(which_dev == 2){
+
+    p->timerIt.timepass++;
+
+    if(p->timerIt.ticks !=0 && p->timerIt.timepass == p->timerIt.ticks){
+      if(p->timerIt.accessable){
+        //保存用户寄存器
+        memmove(p->timerIt.alarmframe,p->trapframe,sizeof(struct trapframe));  
+        p->trapframe->epc = p->timerIt.pFunc;  //调用回调函数
+        p->timerIt.accessable = 0;
+      }
+      p->timerIt.timepass = 0;      
+    }
+    else
+      yield();
+  }
 
   usertrapret();
 }
@@ -98,7 +126,7 @@ usertrapret(void)
 
   // send syscalls, interrupts, and exceptions to uservec in trampoline.S
   uint64 trampoline_uservec = TRAMPOLINE + (uservec - trampoline);
-  w_stvec(trampoline_uservec);
+  w_stvec(trampoline_uservec);  //调用trap处理函数换到uservec
 
   // set up trapframe values that uservec will need when
   // the process next traps into the kernel.
@@ -214,7 +242,8 @@ devintr()
     w_sip(r_sip() & ~2);
 
     return 2;
-  } else {
+  } 
+  else {
     return 0;
   }
 }
