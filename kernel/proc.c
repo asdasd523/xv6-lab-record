@@ -132,6 +132,13 @@ found:
     return 0;
   }
 
+  //在分配进程页表之前分配空间，否则会出现错误
+  if((p->sys_pid = (struct usyscall *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -146,6 +153,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->sys_pid->pid = p->pid;
+
   return p;
 }
 
@@ -157,6 +166,9 @@ freeproc(struct proc *p)
 {
   if(p->trapframe)
     kfree((void*)p->trapframe);
+  if(p->sys_pid)
+    kfree((void*)p->sys_pid);
+  p->sys_pid = 0;
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
@@ -202,9 +214,19 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  //映射于pagetable上
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)(p->sys_pid), PTE_R | PTE_U) < 0){      //allocate PTE flag
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   return pagetable;
 }
 
+// 解除映射
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
@@ -212,6 +234,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -296,9 +319,6 @@ fork(void)
   }
   np->sz = p->sz;
 
-  //copy mask to son
-  np->mask = p->mask;    
-
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -328,7 +348,7 @@ fork(void)
   return pid;
 }
 
-// Pass p's abandoned children to init.  孤儿回收
+// Pass p's abandoned children to init.
 // Caller must hold wait_lock.
 void
 reparent(struct proc *p)
@@ -683,17 +703,4 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
-}
-
-//获取进程表中状态不为未使用的进程个数
-uint64
-get_procnum()
-{
-  struct proc* p;
-  int res = 0;
-  for(p = proc;p < &proc[NPROC];p++){
-    if(p->state != UNUSED)
-      res++;
-  }
-  return res;
 }
